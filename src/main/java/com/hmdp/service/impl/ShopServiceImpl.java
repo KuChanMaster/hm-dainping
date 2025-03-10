@@ -68,7 +68,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         String lockKey = LOCK_SHOP_KEY + id;
         boolean isLock = tryLock(lockKey);
         if (isLock) {
-
             shopJson = stringRedisTemplate.opsForValue().get(key);
             redisData = JSONUtil.toBean(shopJson, new TypeReference<RedisData<Shop>>() {
             }, false);
@@ -87,7 +86,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         return Result.ok(shop);
     }
-
     private boolean tryLock(String key) {
         Boolean flag = stringRedisTemplate
                 .opsForValue()
@@ -98,11 +96,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                         TimeUnit.SECONDS);
         return false;
     }
-
     private void unLock(String key) {
         stringRedisTemplate.delete(key);
     }
-
     @Override
     @Transactional//保障原子性
     public Result update(Shop shop) {

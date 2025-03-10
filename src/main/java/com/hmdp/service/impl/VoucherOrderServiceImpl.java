@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
@@ -9,6 +10,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.stereotype.Service;
@@ -38,7 +40,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ConfigurationPropertiesAutoConfiguration configurationPropertiesAutoConfiguration;
 
     @Override
-    @Transactional
     public Result seckillVoucher(Long voucherId) {
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
         if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
@@ -50,12 +51,36 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if (voucher.getStock() < 1) {
             return Result.fail("库存不足");
         }
+        /*
+         * 因为此时用户下单在并发状态下可以重复下单造成了黄牛的一个问题，所以需要一人一单
+         * */
+        Long userId = UserHolder.getUser().getId();
+        synchronized (userId.toString().intern()) {
+            //通过代理对象，进行方法调用，避免事务的失败
+            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
+            return proxy.createVoucherOrder(voucherId);
+        }
+    }
+
+    @Transactional
+    public Result createVoucherOrder(Long voucherId) {
+        //一人一单
+        Long userId = UserHolder.getUser().getId();
+        LambdaQueryWrapper<VoucherOrder> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper
+                .eq(VoucherOrder::getUserId, voucherId)
+                .eq(VoucherOrder::getVoucherId, voucherId);
+        int count = this.count(queryWrapper);
+
+        if (count > 0) {
+            return Result.fail("您已购买过此商品");
+        }
         //扣除库存
         boolean success = seckillVoucherService
                 .update()
                 .setSql("stock=stock-1")
                 .eq("voucher_id", voucherId)
-                .gt("stock", 0)
+                .gt("stock", 0)//乐观锁解决超卖问题（CAS法）
                 .update();
         if (!success) {
             return Result.fail("被抢光了 >_< ");
@@ -66,12 +91,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             Constructor<?> constructor = clazz.getConstructor();
             VoucherOrder vocherOrder = (VoucherOrder) constructor.newInstance();
             long orderId = redisIdWorker.createId("order");
-            Long userId = UserHolder.getUser().getId();
             vocherOrder.setId(orderId).setUserId(userId).setVoucherId(voucherId);
             this.save(vocherOrder);
             return Result.ok(orderId);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+
     }
 }
